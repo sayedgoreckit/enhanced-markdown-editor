@@ -20,12 +20,14 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  ZefyrController? _controller;
+  LimitedZefyrController? _controller;
   final FocusNode _focusNode = FocusNode();
-  final SimpleClipboardController _clipboardController =
-      SimpleClipboardController();
 
   Settings? _settings;
+
+  //[Sayed Documentation] Character limit for the editor
+  static const int _maxCharacterLimit = 1000;
+  int _currentCharacterCount = 0;
 
   void _handleSettingsLoaded(Settings value) {
     setState(() {
@@ -38,26 +40,72 @@ class _HomePageState extends State<HomePage> {
   void initState() {
     super.initState();
     Settings.load().then(_handleSettingsLoaded);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _clipboardController.paste(
-        _controller!,
-        TextEditingValue(text: '**Hello**'),
-      );
-    });
   }
 
+  //[Sayed Documentation] Load initial data with styled content
   Future<void> _loadFromAssets() async {
     try {
       final result = await rootBundle.loadString('assets/welcome.note');
       final doc = NotusDocument.fromJson(jsonDecode(result));
       setState(() {
-        _controller = ZefyrController(doc);
+        _controller = LimitedZefyrController(
+          doc,
+          maxCharacterLimit: _maxCharacterLimit,
+          onCharacterCountChanged: _updateCharacterCount,
+          onLimitExceeded: _showLimitExceededDialog,
+        );
+        _updateCharacterCount();
       });
     } catch (error) {
-      final doc = NotusDocument()..insert(0, 'Empty asset');
+      //[Sayed Documentation] Create empty document to start with no text
+      final emptyDoc = NotusDocument();
       setState(() {
-        _controller = ZefyrController(doc);
+        _controller = LimitedZefyrController(
+          emptyDoc,
+          maxCharacterLimit: _maxCharacterLimit,
+          onCharacterCountChanged: _updateCharacterCount,
+          onLimitExceeded: _showLimitExceededDialog,
+        );
+        _updateCharacterCount();
       });
+    }
+  }
+
+  //[Sayed Documentation] Update character count and check limit
+  void _updateCharacterCount() {
+    if (_controller != null) {
+      final plainText = _controller!.document.toPlainText();
+      setState(() {
+        _currentCharacterCount = plainText.length;
+      });
+
+      //[Sayed Documentation] Print rich text content to console (as it would be sent to backend)
+      if (plainText.isNotEmpty) {
+        print('=== RICH TEXT CONTENT (JSON) ===');
+        print(jsonEncode(_controller!.document));
+        print('=== END RICH TEXT CONTENT ===');
+
+        //[Sayed Documentation] Also print plain text for reference
+        print('=== PLAIN TEXT CONTENT ===');
+        print(plainText);
+        print('=== END PLAIN TEXT CONTENT ===');
+      }
+    }
+  }
+
+  //[Sayed Documentation] Check if character limit is exceeded
+  bool _isCharacterLimitExceeded() {
+    return _currentCharacterCount > _maxCharacterLimit;
+  }
+
+  //[Sayed Documentation] Get character count color based on limit
+  Color _getCharacterCountColor() {
+    if (_isCharacterLimitExceeded()) {
+      return Colors.red;
+    } else if (_currentCharacterCount > _maxCharacterLimit * 0.8) {
+      return Colors.orange;
+    } else {
+      return Colors.grey;
     }
   }
 
@@ -171,6 +219,29 @@ class _HomePageState extends State<HomePage> {
           controller: _controller!,
         ),
         Divider(height: 1, thickness: 1, color: Colors.grey.shade200),
+        //[Sayed Documentation] Character count display
+        Container(
+          padding: EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+          color: Colors.grey.shade50,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'Character Count: $_currentCharacterCount/$_maxCharacterLimit',
+                style: TextStyle(
+                  color: _getCharacterCountColor(),
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              if (_isCharacterLimitExceeded())
+                Icon(
+                  Icons.warning,
+                  color: Colors.red,
+                  size: 16,
+                ),
+            ],
+          ),
+        ),
         Expanded(
           child: Container(
             color: Colors.white,
@@ -178,7 +249,7 @@ class _HomePageState extends State<HomePage> {
             child: ZefyrEditor(
               controller: _controller!,
               focusNode: _focusNode,
-              clipboardController: _clipboardController,
+              clipboardController: _createLimitedClipboardController(),
               autofocus: true,
               // readOnly: true,
               // padding: EdgeInsets.only(left: 16, right: 16),
@@ -187,6 +258,34 @@ class _HomePageState extends State<HomePage> {
           ),
         ),
       ],
+    );
+  }
+
+  //[Sayed Documentation] Create a clipboard controller that respects character limits
+  ClipboardController _createLimitedClipboardController() {
+    return LimitedClipboardController(
+      maxCharacterLimit: _maxCharacterLimit,
+      onLimitExceeded: _showLimitExceededDialog,
+    );
+  }
+
+  //[Sayed Documentation] Show dialog when character limit is exceeded
+  void _showLimitExceededDialog() {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: Text('Character Limit Exceeded'),
+          content: Text(
+              'The content you are trying to add would exceed the maximum character limit of $_maxCharacterLimit characters.'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: Text('OK'),
+            ),
+          ],
+        );
+      },
     );
   }
 
@@ -243,5 +342,131 @@ class _HomePageState extends State<HomePage> {
         ),
       ),
     );
+  }
+
+  @override
+  void dispose() {
+    _controller?.dispose();
+    _focusNode.dispose();
+    super.dispose();
+  }
+}
+
+//[Sayed Documentation] Custom ZefyrController that enforces character limits
+class LimitedZefyrController extends ZefyrController {
+  final int maxCharacterLimit;
+  final VoidCallback onCharacterCountChanged;
+  final VoidCallback onLimitExceeded;
+
+  LimitedZefyrController(
+    NotusDocument document, {
+    required this.maxCharacterLimit,
+    required this.onCharacterCountChanged,
+    required this.onLimitExceeded,
+  }) : super(document) {
+    // Add listener to track character count changes
+    addListener(_handleCharacterCountChange);
+  }
+
+  //[Sayed Documentation] Handle character count changes
+  void _handleCharacterCountChange() {
+    onCharacterCountChanged();
+  }
+
+  @override
+  void replaceText(int index, int length, Object? data,
+      {TextSelection? selection}) {
+    if (data is String) {
+      //[Sayed Documentation] Check if the new content would exceed the character limit
+      final currentText = document.toPlainText();
+      final selectedTextLength = this.selection.end - this.selection.start;
+      final newTextLength =
+          currentText.length - selectedTextLength + data.length;
+
+      if (newTextLength > maxCharacterLimit) {
+        onLimitExceeded();
+        return;
+      }
+    }
+
+    // Proceed with normal text replacement
+    super.replaceText(index, length, data, selection: selection);
+  }
+
+  @override
+  void dispose() {
+    removeListener(_handleCharacterCountChange);
+    super.dispose();
+  }
+}
+
+//[Sayed Documentation] Custom clipboard controller that enforces character limits
+class LimitedClipboardController implements ClipboardController {
+  final int maxCharacterLimit;
+  final VoidCallback onLimitExceeded;
+
+  LimitedClipboardController({
+    required this.maxCharacterLimit,
+    required this.onLimitExceeded,
+  });
+
+  @override
+  void copy(ZefyrController controller, String plainText) {
+    if (!controller.selection.isCollapsed) {
+      // ignore: unawaited_futures
+      Clipboard.setData(
+          ClipboardData(text: controller.selection.textInside(plainText)));
+    }
+  }
+
+  @override
+  TextEditingValue? cut(ZefyrController controller, String plainText) {
+    if (!controller.selection.isCollapsed) {
+      final data = controller.selection.textInside(plainText);
+      // ignore: unawaited_futures
+      Clipboard.setData(ClipboardData(text: data));
+
+      controller.replaceText(
+        controller.selection.start,
+        data.length,
+        '',
+        selection: TextSelection.collapsed(offset: controller.selection.start),
+      );
+
+      return TextEditingValue(
+        text: controller.selection.textBefore(plainText) +
+            controller.selection.textAfter(plainText),
+        selection: TextSelection.collapsed(offset: controller.selection.start),
+      );
+    }
+    return null;
+  }
+
+  @override
+  Future<void> paste(
+      ZefyrController controller, TextEditingValue textEditingValue) async {
+    final data = await Clipboard.getData(Clipboard.kTextPlain);
+    if (data != null && data.text != null) {
+      final currentText = controller.document.toPlainText();
+      final selection = controller.selection;
+      final selectedTextLength = selection.end - selection.start;
+      final newTextLength =
+          currentText.length - selectedTextLength + data.text!.length;
+
+      if (newTextLength > maxCharacterLimit) {
+        onLimitExceeded();
+        return;
+      }
+
+      // Proceed with normal paste operation
+      final length = controller.selection.end - controller.selection.start;
+      controller.replaceText(
+        controller.selection.start,
+        length,
+        data.text!,
+        selection: TextSelection.collapsed(
+            offset: controller.selection.start + data.text!.length),
+      );
+    }
   }
 }
