@@ -22,6 +22,8 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   ZefyrController? _controller;
   final FocusNode _focusNode = FocusNode();
+  final SimpleClipboardController _clipboardController =
+      SimpleClipboardController();
 
   Settings? _settings;
 
@@ -36,6 +38,12 @@ class _HomePageState extends State<HomePage> {
   void initState() {
     super.initState();
     Settings.load().then(_handleSettingsLoaded);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _clipboardController.paste(
+        _controller!,
+        TextEditingValue(text: '**Hello**'),
+      );
+    });
   }
 
   Future<void> _loadFromAssets() async {
@@ -108,7 +116,8 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _buildMenuBar(BuildContext context) {
-    final headerStyle = TextStyle(fontSize: 11, color: Colors.grey.shade500, fontWeight: FontWeight.bold);
+    final headerStyle = TextStyle(
+        fontSize: 11, color: Colors.grey.shade500, fontWeight: FontWeight.bold);
     final itemStyle = TextStyle(color: Colors.white);
     return ListView(
       children: [
@@ -158,7 +167,9 @@ class _HomePageState extends State<HomePage> {
   Widget _buildWelcomeEditor(BuildContext context) {
     return Column(
       children: [
-        ZefyrToolbar.basic(controller: _controller!),
+        ZefyrToolbar.basic(
+          controller: _controller!,
+        ),
         Divider(height: 1, thickness: 1, color: Colors.grey.shade200),
         Expanded(
           child: Container(
@@ -167,6 +178,7 @@ class _HomePageState extends State<HomePage> {
             child: ZefyrEditor(
               controller: _controller!,
               focusNode: _focusNode,
+              clipboardController: _clipboardController,
               autofocus: true,
               // readOnly: true,
               // padding: EdgeInsets.only(left: 16, right: 16),
